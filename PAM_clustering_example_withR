@@ -1,0 +1,67 @@
+require(factoextra)
+require(tidyverse)
+require(tidymodels)
+
+#most of this data is available at the National Administrative Department of Statistics of Colombia (DANE in spanish), however, I am used a dataset built by the University of the Andes
+#that is not readily available for sharing. I cannot upload its content for its terms of usage.
+
+#The code serves the main purpose of showing how a pam clustering algorithm can be implemented.
+
+#NBI <- read.csv("C:\\Users\\usuario\\Downloads\\NBI2022.csv")
+#ALFAB <- read.csv("C:\\Users\\usuario\\Downloads\\ALFAB.csv")
+#DES_FISCAL <- read.csv("C:\\Users\\usuario\\Downloads\\DES_FISCAL.csv")
+#DIST_BOGOTA <- read.csv("C:\\Users\\usuario\\Downloads\\DIST_BOGOTA.csv")
+#INDRURAL <- read.csv("C:\\Users\\usuario\\Downloads\\INDRURAL.csv")
+#IICA <- read.csv("C:\\Users\\usuario\\Downloads\\IICA.csv")
+
+custommerging <- function(x, y){
+  munidata <- merge(x, y, by= "COD", all.x=FALSE,all.y=FALSE)
+  return(munidata)
+}
+
+munidata <- Reduce(custommerging, list(NBI, ALFAB, DES_FISCAL, DIST_BOGOTA,INDRURAL,IICA))
+munidata <- na.omit(munidata)
+munidata[,2:7] <- scale(munidata[,2:7])
+clusterinfo <- munidata[2:7]
+
+fviz_nbclust(clusterinfo, cluster::pam, method = "wss")
+fviz_nbclust(clusterinfo, cluster::pam, method = "silhouette")
+fviz_nbclust(clusterinfo, cluster::pam, method = "gap_stat",nboot = 50)
+municlusters <- cluster::pam(clusterinfo, 6)
+clusters <- municlusters$clustering
+
+munidata2 <- cbind(munidata,clusters)
+munidata2 %>% group_by(clusters) %>% summarise(NBI = mean(NBI),ALFAB=mean(ALFAB),
+                                               DES_FISCAL = mean(DES_FISCAL),
+                                               DIST_BOGOTA = mean(DIST_BOGOTA),
+                                               INDRURAL = mean(INDRURAL),
+                                               IICA = mean(IICA)) %>% as.data.frame()
+
+
+munidata2$clusters <- as.factor(munidata2$clusters)
+munidata_spread <- munidata2 %>% mutate(dummy=1) %>% spread(key=clusters,value=dummy,fill = 0)
+munidata_spread[8:13] <- lapply(munidata_spread[8:13],factor)
+
+homicides <- read_xlsx("C:\\Users\\usuario\\Downloads\\OneDrive_1_20-1-2021\\Microdatos\\Panel CEDE(2019) Excel\\CONFLICTO_Y_VIOLENCIA(2019).xlsx")
+population <- read_xlsx("C:\\Users\\usuario\\Downloads\\OneDrive_1_20-1-2021\\Microdatos\\Panel CEDE(2019) Excel\\PANEL_CARACTERISTICAS_GENERALES(2019).xlsx")
+homicides <- subset(homicides,ano==2018)
+population <- subset(population,ano==2018)
+homicides <- homicides %>% select(codmpio,homicidios) %>% rename(COD=codmpio)
+population <- population %>% select(codmpio,pobl_tot) %>% rename(COD=codmpio)
+
+munidata_spread <- Reduce(custommerging, list(munidata_spread,homicides,population))
+munidata_spread$homirate <- (munidata_spread$homicidios/munidata_spread$pobl_tot)*100000
+
+split <- initial_split(munidata_spread,prop = 0.75)
+trainingcluster <- training(split)
+testingcluster <- testing(split)
+
+lm_model <- linear_reg() %>% set_engine("lm")
+
+trainreg <- lm_model %>% fit(homirate ~ `2`+`3`+`4`+`5`+`6`,trainingcluster)
+
+summary(trainreg$fit)
+
+testingresults <- trainreg %>% predict(new_data = testingcluster) %>% mutate(truth = testingcluster$homirate)
+
+as.data.frame(rsq(testingresults,truth=truth,estimate=.pred))
