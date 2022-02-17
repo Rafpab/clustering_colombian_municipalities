@@ -1,3 +1,4 @@
+require(cluster)
 require(factoextra)
 require(tidyverse)
 require(tidymodels)
@@ -21,15 +22,16 @@ custommerging <- function(x, y){
 
 munidata <- Reduce(custommerging, list(NBI, ALFAB, DES_FISCAL, DIST_BOGOTA,INDRURAL,IICA))
 munidata <- na.omit(munidata)
+
 munidata[,2:7] <- scale(munidata[,2:7])
 clusterinfo <- munidata[2:7]
-
 fviz_nbclust(clusterinfo, cluster::pam, method = "wss")
 fviz_nbclust(clusterinfo, cluster::pam, method = "silhouette")
 fviz_nbclust(clusterinfo, cluster::pam, method = "gap_stat",nboot = 50)
-municlusters <- cluster::pam(clusterinfo, 6)
-clusters <- municlusters$clustering
 
+
+municlusters <- cluster::pam(clusterinfo, 4)
+clusters <- municlusters$clustering
 munidata2 <- cbind(munidata,clusters)
 munidata2 %>% group_by(clusters) %>% summarise(NBI = mean(NBI),ALFAB=mean(ALFAB),
                                                DES_FISCAL = mean(DES_FISCAL),
@@ -58,10 +60,11 @@ testingcluster <- testing(split)
 
 lm_model <- linear_reg() %>% set_engine("lm")
 
-trainreg <- lm_model %>% fit(homirate ~ `2`+`3`+`4`+`5`+`6`,trainingcluster)
+trainreg <- lm_model %>% fit(homirate ~ `2`+`3`+`4`+scale(log(pobl_tot)),trainingcluster)
 
 summary(trainreg$fit)
 
-testingresults <- trainreg %>% predict(new_data = testingcluster) %>% mutate(truth = testingcluster$homirate)
+testingresults <- trainreg %>% predict(new_data = testingcluster) %>% 
+mutate(truth = testingcluster$homirate)
 
 as.data.frame(rsq(testingresults,truth=truth,estimate=.pred))
